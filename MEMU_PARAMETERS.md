@@ -56,12 +56,44 @@ Location:
 
 Fields:
 
-- `embedding.provider`
-- `embedding.apiKey`
-- `embedding.baseUrl`
-- `embedding.model`
+- `embedding.provider` (string)
+- `embedding.apiKey` (string | SecretRef) - **Supports SecretRef since v0.2.6**
+- `embedding.baseUrl` (string)
+- `embedding.model` (string)
 
 Used for vector embedding/retrieval.
+
+#### API Key Configuration (v0.2.6+)
+
+The `apiKey` field supports three formats:
+
+1. **Environment Variable Template (Recommended)**:
+   ```json
+   "apiKey": "${OPENAI_API_KEY}"
+   ```
+   - Automatically resolves to environment variable
+   - Safe to commit to git (only contains variable name)
+   - Most convenient and secure method
+
+2. **Full SecretRef Object**:
+   ```json
+   "apiKey": {
+     "source": "env",
+     "provider": "default",
+     "id": "OPENAI_API_KEY"
+   }
+   ```
+   - Equivalent to `${VAR}` syntax
+   - Currently only `env` source is supported
+
+3. **Plain Text** (not recommended):
+   ```json
+   "apiKey": "sk-..."
+   ```
+   - Shows security warning on startup
+   - Risk of leaking if committed to git
+
+**Environment Variable Fallback**: If `apiKey` is not configured, automatically falls back to `MEMU_EMBED_API_KEY` environment variable.
 
 ---
 
@@ -77,12 +109,18 @@ Used for vector embedding/retrieval.
 
 Fields:
 
-- `extraction.provider`
-- `extraction.apiKey`
-- `extraction.baseUrl`
-- `extraction.model`
+- `extraction.provider` (string)
+- `extraction.apiKey` (string | SecretRef) - **Supports SecretRef since v0.2.6**
+- `extraction.baseUrl` (string)
+- `extraction.model` (string)
 
 Used by memory extraction and full-mode decision checks.
+
+#### API Key Configuration (v0.2.6+)
+
+Same as `embedding.apiKey` - supports environment variable template syntax, full SecretRef objects, and plain text. See section 1.2 for details.
+
+**Environment Variable Fallback**: If `apiKey` is not configured, automatically falls back to `MEMU_CHAT_API_KEY` environment variable.
 
 ---
 
@@ -308,13 +346,13 @@ If explicit quotas exceed `maxResults`, quotas are scaled down to fit.
           "language": "zh",
           "embedding": {
             "provider": "openai",
-            "apiKey": "YOUR_EMBED_KEY",
+            "apiKey": "${OPENAI_API_KEY}",
             "baseUrl": "https://api.siliconflow.cn/v1",
             "model": "BAAI/bge-m3"
           },
           "extraction": {
             "provider": "openai",
-            "apiKey": "YOUR_CHAT_KEY",
+            "apiKey": "${OPENAI_API_KEY}",
             "baseUrl": "https://your-chat-endpoint/v1",
             "model": "your-chat-model"
           },
@@ -337,3 +375,19 @@ If explicit quotas exceed `maxResults`, quotas are scaled down to fit.
   }
 }
 ```
+
+**Setup (one-time):**
+```bash
+# Set environment variable permanently
+echo 'export OPENAI_API_KEY="sk-your-actual-key"' >> ~/.bashrc
+source ~/.bashrc
+
+# Verify
+echo $OPENAI_API_KEY
+```
+
+**Why use `${VAR}` syntax?**
+- ✅ Config file only contains variable name - safe to commit to git
+- ✅ Actual API key stays in environment variable - never exposed
+- ✅ Different environments can use different keys
+- ✅ Follows 12-Factor App best practices
