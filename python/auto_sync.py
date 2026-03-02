@@ -87,6 +87,16 @@ from memu.app.settings import (
 from convert_sessions import convert
 
 
+def _read_prev_main_session_id() -> str | None:
+    raw = os.getenv("MEMU_PREV_MAIN_SESSION_ID")
+    if not raw:
+        return None
+    sid = raw.strip()
+    if not sid:
+        return None
+    return sid
+
+
 def _try_acquire_lock(lock_path: str):
     """Best-effort non-blocking lock using O_EXCL.
 
@@ -384,6 +394,27 @@ def _write_last_sync(ts: float) -> None:
         f.write(str(ts))
 
 
+def _main_session_file_exists() -> bool:
+    """Best-effort check: does OpenClaw main session jsonl exist right now?
+
+    IMPORTANT: If the main session file is temporarily missing (startup race / rotation),
+    we must NOT advance last_sync_ts, otherwise we can permanently skip older mtimes.
+    """
+    sessions_dir = os.getenv("OPENCLAW_SESSIONS_DIR")
+    if not sessions_dir:
+        return False
+    sessions_json = os.path.join(sessions_dir, "sessions.json")
+    try:
+        with open(sessions_json, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        main_id = (data.get("agent:main:main") or {}).get("sessionId")
+        if not main_id:
+            return False
+        return os.path.exists(os.path.join(sessions_dir, f"{main_id}.jsonl"))
+    except Exception:
+        return False
+
+
 async def sync_once(user_id: str = "default") -> None:
     # Prevent concurrent runs (watcher + manual tool) to avoid duplicated ingestion.
     lock_name = os.path.join(tempfile.gettempdir(), "memu_sync.lock_auto_sync")
@@ -402,7 +433,36 @@ async def sync_once(user_id: str = "default") -> None:
         pending_paths = _load_pending_ingest()
 
         # 1) Convert updated OpenClaw session jsonl -> memU JSON resources
+        # NOTE: convert() may return [] if the main session file is temporarily missing.
+        # In that case, do NOT advance last_sync_ts; otherwise we can skip content.
         converted_paths = convert(since_ts=last_sync)
+
+        # Optional salvage path: when watcher detects a /new switch,
+        # it passes the previous main session id. Force-finalize any staged tail
+        # from that previous session so reset archives do not strand messages.
+        prev_main_session_id = _read_prev_main_session_id()
+        if prev_main_session_id:
+            try:
+                salvage_paths = convert(
+                    since_ts=last_sync,
+                    session_id=prev_main_session_id,
+                    force_flush=True,
+                )
+                if salvage_paths:
+                    _log(
+                        f"salvage previous main session ({prev_main_session_id}): {len(salvage_paths)} part(s)"
+                    )
+                    converted_paths.extend(salvage_paths)
+            except Exception as e:
+                _log(
+                    f"salvage failed for previous main session ({prev_main_session_id}): {type(e).__name__}: {e}"
+                )
+
+        if not converted_paths and not pending_paths and not _main_session_file_exists():
+            _log(
+                "main session file missing/unavailable; skip updating sync cursor to avoid data loss"
+            )
+            return
 
         # Merge (preserve order) and persist pending queue BEFORE ingest.
         merged: list[str] = []

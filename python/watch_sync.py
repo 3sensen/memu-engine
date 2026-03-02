@@ -214,27 +214,70 @@ class SyncHandler(FileSystemEventHandler):
         )
         self.should_trigger = should_trigger
 
+    @staticmethod
+    def _matches_extensions(path: str | None, extensions: list[str]) -> bool:
+        if not path:
+            return False
+        return any(path.endswith(ext) for ext in extensions)
+
+    def _handle_event(self, *, src_path: str, dest_path: str | None = None):
+        if not (
+            self._matches_extensions(src_path, self.extensions)
+            or self._matches_extensions(dest_path, self.extensions)
+        ):
+            return
+
+        extra_env: dict[str, str] | None = None
+        if self.should_trigger:
+            decision = self.should_trigger(src_path=src_path, dest_path=dest_path)
+            should_run = False
+            if isinstance(decision, tuple):
+                should_run = bool(decision[0])
+                maybe_env = decision[1] if len(decision) > 1 else None
+                if isinstance(maybe_env, dict):
+                    extra_env = {
+                        str(k): str(v)
+                        for k, v in maybe_env.items()
+                        if v is not None and str(v)
+                    }
+            else:
+                should_run = bool(decision)
+
+            if not should_run:
+                return
+
+        changed_path = dest_path or src_path
+        self.trigger_sync(changed_path=changed_path, extra_env=extra_env)
+
     def on_modified(self, event):
         if event.is_directory:
             return
-        if not any(event.src_path.endswith(ext) for ext in self.extensions):
-            return
-        src_path = str(event.src_path)
-        if self.should_trigger and not self.should_trigger(src_path):
-            return
-        self.trigger_sync(changed_path=src_path)
+        self._handle_event(src_path=str(event.src_path))
 
     def on_created(self, event):
         if event.is_directory:
             return
-        if not any(event.src_path.endswith(ext) for ext in self.extensions):
-            return
-        src_path = str(event.src_path)
-        if self.should_trigger and not self.should_trigger(src_path):
-            return
-        self.trigger_sync(changed_path=src_path)
+        self._handle_event(src_path=str(event.src_path))
 
-    def trigger_sync(self, *, changed_path: str | None = None):
+    def on_moved(self, event):
+        if event.is_directory:
+            return
+        self._handle_event(
+            src_path=str(event.src_path),
+            dest_path=str(getattr(event, "dest_path", "") or ""),
+        )
+
+    def on_deleted(self, event):
+        if event.is_directory:
+            return
+        self._handle_event(src_path=str(event.src_path))
+
+    def trigger_sync(
+        self,
+        *,
+        changed_path: str | None = None,
+        extra_env: dict[str, str] | None = None,
+    ):
         now = time.time()
         if now - self.last_run < self.debounce_seconds:
             return
@@ -257,6 +300,8 @@ class SyncHandler(FileSystemEventHandler):
             env = os.environ.copy()
             if changed_path:
                 env["MEMU_CHANGED_PATH"] = changed_path
+            if extra_env:
+                env.update(extra_env)
             script_path = os.path.join(MEMU_DIR, self.script_name)
             subprocess.run([sys.executable, script_path], cwd=MEMU_DIR, env=env)
         except Exception as e:
@@ -302,20 +347,73 @@ if __name__ == "__main__":
     if SESSIONS_DIR and os.path.exists(SESSIONS_DIR):
         print(f"Watching sessions: {SESSIONS_DIR}")
 
-        def _sessions_should_trigger(src_path: str) -> bool:
-            # Refresh main session file when sessions.json changes.
-            if sessions_json_path and os.path.abspath(src_path) == os.path.abspath(
-                sessions_json_path
-            ):
+        sessions_dir_abs = os.path.abspath(SESSIONS_DIR)
+
+        def _is_sessions_json_path(path: str) -> bool:
+            if not path:
+                return False
+            try:
+                p = os.path.abspath(path)
+                return os.path.dirname(p) == sessions_dir_abs and os.path.basename(
+                    p
+                ) == "sessions.json"
+            except Exception:
+                return False
+
+        def _sessions_should_trigger(
+            *, src_path: str, dest_path: str | None = None
+        ) -> bool | tuple[bool, dict[str, str]]:
+            paths = [p for p in (src_path, dest_path) if p]
+            abs_paths = []
+            for p in paths:
+                try:
+                    abs_paths.append(os.path.abspath(p))
+                except Exception:
+                    continue
+
+            # 1) sessions.json may be atomically replaced (rename/move).
+            # Refresh main binding when either side references sessions.json.
+            if any(_is_sessions_json_path(p) for p in paths):
                 main_session_file_box["path"] = _get_main_session_file()
                 return True
 
-            # Only trigger on changes to the current main session file.
             main_session_file = main_session_file_box.get("path")
-            if main_session_file and os.path.abspath(src_path) == os.path.abspath(
-                main_session_file
-            ):
+            main_abs = os.path.abspath(main_session_file) if main_session_file else None
+
+            # 2) Current tracked main transcript changed.
+            if main_abs and any(p == main_abs for p in abs_paths):
                 return True
+
+            # 3) Any transcript event can indicate a /new switch path changed.
+            # Re-resolve and trigger once when main binding changes.
+            interested = any(
+                p.startswith(sessions_dir_abs + os.sep)
+                and (p.endswith(".jsonl") or p.endswith(".json"))
+                for p in abs_paths
+            )
+            if interested:
+                prev_main = main_session_file_box.get("path")
+                refreshed_main = _get_main_session_file()
+                main_session_file_box["path"] = refreshed_main
+
+                if prev_main != refreshed_main:
+                    extra_env: dict[str, str] = {}
+                    if prev_main:
+                        prev_main_id = os.path.basename(prev_main)
+                        if prev_main_id.endswith(".jsonl"):
+                            prev_main_id = prev_main_id[: -len(".jsonl")]
+                        if prev_main_id:
+                            # Ask auto_sync to salvage/finalize the previous main
+                            # session tail so /new reset archives do not strand
+                            # un-ingested messages.
+                            extra_env["MEMU_PREV_MAIN_SESSION_ID"] = prev_main_id
+                    return (True, extra_env)
+
+                refreshed_abs = (
+                    os.path.abspath(refreshed_main) if refreshed_main else None
+                )
+                if refreshed_abs and any(p == refreshed_abs for p in abs_paths):
+                    return True
 
             return False
 
@@ -372,8 +470,10 @@ if __name__ == "__main__":
                 now_i = int(time.time())
                 if now_i % flush_poll_seconds == 0 and now_i != last_poll_tick:
                     last_poll_tick = now_i
-                    if now_i % (flush_poll_seconds * 10) == 0:
-                        main_session_file_box["path"] = _get_main_session_file()
+                    # Re-resolve main session every poll tick so missed FS events
+                    # (e.g., atomic sessions.json replacement via move/rename)
+                    # do not keep us pinned to a stale transcript file.
+                    main_session_file_box["path"] = _get_main_session_file()
                     # Avoid needless auto_sync calls:
                     # - only trigger if the session is idle AND a staged tail exists
                     # - only trigger once per unique session mtime (otherwise we'd spin)
