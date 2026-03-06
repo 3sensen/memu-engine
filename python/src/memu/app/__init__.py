@@ -1,4 +1,5 @@
-from memu.app.service import MemoryService
+from typing import TYPE_CHECKING
+
 from memu.app.settings import (
     BlobConfig,
     DatabaseConfig,
@@ -16,6 +17,17 @@ from memu.workflow.runner import (
     register_workflow_runner,
     resolve_workflow_runner,
 )
+
+if TYPE_CHECKING:
+    from memu.app.service import MemoryService as MemoryService
+
+
+def __getattr__(name: str):
+    if name == "MemoryService":
+        from memu.app.service import MemoryService
+
+        return MemoryService
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "BlobConfig",
