@@ -39,7 +39,7 @@ beforeAll(() => {
   const source = fs.readFileSync(indexPath, 'utf-8');
   const normalizeAgentSettingsSource = extractFunction(source, 'normalizeAgentSettings');
   const normalizeConfigSource = extractFunction(source, 'normalizeConfig');
-  const runtimeTs = `${normalizeAgentSettingsSource}\n${normalizeConfigSource}\nmodule.exports = { normalizeConfig };`;
+  const runtimeTs = `let warnedAllowCrossAgentRetrievalDeprecation = false;\n${normalizeAgentSettingsSource}\n${normalizeConfigSource}\nmodule.exports = { normalizeConfig };`;
   const transpiled = ts.transpileModule(runtimeTs, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2020,
@@ -189,5 +189,49 @@ describe('normalizeConfig', () => {
     expect((config.extraction as any).apiKey).toEqual(secretRef);
     expect(config.language).toBe('en');
     expect(config.customFlag).toBe(true);
+  });
+
+  it('maps deprecated allowCrossAgentRetrieval=true into default searchableStores and warns once', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const config = normalizeConfig({
+      enabledAgents: ['alpha'],
+      allowCrossAgentRetrieval: true,
+    });
+
+    expect(config.agentSettings.main).toEqual({
+      memoryEnabled: true,
+      searchEnabled: true,
+      searchableStores: ['self', 'shared'],
+    });
+    expect(config.agentSettings.alpha).toEqual({
+      memoryEnabled: true,
+      searchEnabled: true,
+      searchableStores: ['self', 'shared'],
+    });
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'allowCrossAgentRetrieval' is deprecated"));
+    warnSpy.mockRestore();
+  });
+
+  it('warns when official memory and memu-engine are both enabled', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    normalizeConfig({
+      agents: {
+        defaults: {
+          memorySearch: {
+            enabled: true,
+          },
+        },
+      },
+      plugins: {
+        slots: {
+          memory: 'memu-engine',
+        },
+      },
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Official Memory System Conflict'));
+    warnSpy.mockRestore();
   });
 });

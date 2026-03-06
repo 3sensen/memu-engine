@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping
-from typing import Any, override
+from typing import Any
+
+try:
+    from typing import override
+except ImportError:  # Python < 3.12
+    from typing_extensions import override
 
 import pendulum
 

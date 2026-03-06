@@ -30,7 +30,7 @@ beforeAll(() => {
   const source = fs.readFileSync(indexPath, 'utf-8');
   const normalizeAgentSettingsSource = extractFunction(source, 'normalizeAgentSettings');
   const normalizeConfigSource = extractFunction(source, 'normalizeConfig');
-  const runtimeTs = `${normalizeAgentSettingsSource}\n${normalizeConfigSource}\nmodule.exports = { normalizeConfig };`;
+  const runtimeTs = `let warnedAllowCrossAgentRetrievalDeprecation = false;\n${normalizeAgentSettingsSource}\n${normalizeConfigSource}\nmodule.exports = { normalizeConfig };`;
   const transpiled = ts.transpileModule(runtimeTs, {
     compilerOptions: {
       target: ts.ScriptTarget.ES2020,
@@ -117,5 +117,42 @@ describe('config conflict detection: official memory vs memu-engine', () => {
 
     expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('Official Memory System Conflict'));
     warnSpy.mockRestore();
+  });
+
+  it('warns for deprecated allowCrossAgentRetrieval and fills missing agentSettings', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const config = normalizeConfig({
+      enabledAgents: ['trial'],
+      allowCrossAgentRetrieval: false,
+      agentSettings: {
+        trial: {
+          memoryEnabled: false,
+          searchEnabled: true,
+          searchableStores: ['self'],
+        },
+      },
+    });
+
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("'allowCrossAgentRetrieval' is deprecated"));
+    expect(config.agentSettings.main).toEqual({
+      memoryEnabled: true,
+      searchEnabled: true,
+      searchableStores: ['self'],
+    });
+    expect(config.agentSettings.trial).toEqual({
+      memoryEnabled: false,
+      searchEnabled: true,
+      searchableStores: ['self'],
+    });
+    warnSpy.mockRestore();
+  });
+
+  it('throws for invalid chunk inputs in the conflict harness too', () => {
+    expect(() => normalizeConfig({ chunkSize: 0 })).toThrow(/Invalid chunkSize/);
+    expect(() => normalizeConfig({ chunkOverlap: -1 })).toThrow(/Invalid chunkOverlap/);
+    expect(() => normalizeConfig({ chunkSize: 64, chunkOverlap: 64 })).toThrow(
+      /chunkOverlap must be less than chunkSize/
+    );
   });
 });

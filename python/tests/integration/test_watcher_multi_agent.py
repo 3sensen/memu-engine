@@ -302,12 +302,12 @@ def test_should_run_idle_flush(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
     os.utime(session_file, (old, old))
 
     assert watch_sync._should_run_idle_flush(
-        main_session_file=str(session_file), flush_idle_seconds=10
+        main_session_file=str(session_file), agent_name="main", flush_idle_seconds=10
     )
     assert not watch_sync._should_run_idle_flush(
-        main_session_file=str(session_file), flush_idle_seconds=0
+        main_session_file=str(session_file), agent_name="main", flush_idle_seconds=0
     )
-    assert not watch_sync._should_run_idle_flush(main_session_file=None, flush_idle_seconds=10)
+    assert not watch_sync._should_run_idle_flush(main_session_file=None, agent_name="main", flush_idle_seconds=10)
 
 
 def test_sync_handler_events_and_trigger(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -632,7 +632,14 @@ def test_branches_for_missing_values_and_errors(monkeypatch: pytest.MonkeyPatch,
     assert out == {}
 
     monkeypatch.delenv("MEMU_DATA_DIR", raising=False)
-    assert watch_sync._should_run_idle_flush(main_session_file=str(sessions_dir / "m1.jsonl"), flush_idle_seconds=10) is False
+    assert (
+        watch_sync._should_run_idle_flush(
+            main_session_file=str(sessions_dir / "m1.jsonl"),
+            agent_name="main",
+            flush_idle_seconds=10,
+        )
+        is False
+    )
 
 
 def test_sync_handler_misc_branches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -721,7 +728,14 @@ def test_remaining_uncovered_branches(monkeypatch: pytest.MonkeyPatch, tmp_path:
     sf = tmp_path / "s.jsonl"
     sf.write_text("{}\n", encoding="utf-8")
     os.utime(sf, (time.time(), time.time()))
-    assert watch_sync._should_run_idle_flush(main_session_file=str(sf), flush_idle_seconds=5000) is False
+    assert (
+        watch_sync._should_run_idle_flush(
+            main_session_file=str(sf),
+            agent_name="main",
+            flush_idle_seconds=5000,
+        )
+        is False
+    )
 
     class _Obs(_FakeObserver):
         def start(self):
@@ -794,10 +808,24 @@ def test_more_uncovered_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     monkeypatch.setenv("MEMU_DATA_DIR", str(d))
     old = time.time() - 1000
     os.utime(sf, (old, old))
-    assert watch_sync._should_run_idle_flush(main_session_file=str(sf), flush_idle_seconds=10) is False
+    assert (
+        watch_sync._should_run_idle_flush(
+            main_session_file=str(sf),
+            agent_name="main",
+            flush_idle_seconds=10,
+        )
+        is False
+    )
     small_tail = d / "conversations" / "sess.log.tail.tmp.json"
     small_tail.write_text("x", encoding="utf-8")
-    assert watch_sync._should_run_idle_flush(main_session_file=str(sf), flush_idle_seconds=10) is False
+    assert (
+        watch_sync._should_run_idle_flush(
+            main_session_file=str(sf),
+            agent_name="main",
+            flush_idle_seconds=10,
+        )
+        is False
+    )
 
     h = watch_sync.SyncHandler("auto_sync.py", [".jsonl"], should_trigger=lambda **kw: (False, {"X": "1"}))
     monkeypatch.setattr(h, "trigger_sync", lambda **kw: (_ for _ in ()).throw(AssertionError("should not trigger")))
