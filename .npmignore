@@ -8,9 +8,6 @@ python/tests/
 coverage/
 baseline_coverage/
 baseline_coverage_ts/
-tests/validation/.generated/
-tests/fixtures/.memu_migration/
-tests/fixtures/v0_2_6_data.backup.*/
 
 # AI/local working artifacts
 .sisyphus/
