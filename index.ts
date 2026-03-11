@@ -17,10 +17,129 @@ interface NormalizedConfig {
   >;
   chunkSize: number;
   chunkOverlap: number;
+  network: {
+    proxy: {
+      mode: "inherit" | "plugin" | "none";
+      httpProxy?: string;
+      httpsProxy?: string;
+      allProxy?: string;
+      noProxy?: string;
+    };
+  };
   [key: string]: any;
 }
 
 let warnedAllowCrossAgentRetrievalDeprecation = false;
+
+const PROXY_ENV_KEYS = [
+  "HTTP_PROXY",
+  "HTTPS_PROXY",
+  "ALL_PROXY",
+  "NO_PROXY",
+  "http_proxy",
+  "https_proxy",
+  "all_proxy",
+  "no_proxy",
+] as const;
+
+type ProxyMode = "inherit" | "plugin" | "none";
+
+type ProxyConfig = {
+  mode: ProxyMode;
+  httpProxy?: string;
+  httpsProxy?: string;
+  allProxy?: string;
+  noProxy?: string;
+};
+
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeProxyConfig(config: any): ProxyConfig {
+  const rawProxy = config?.network?.proxy;
+  const rawMode = typeof rawProxy?.mode === "string" ? rawProxy.mode.trim().toLowerCase() : "inherit";
+  const mode: ProxyMode = rawMode === "plugin" || rawMode === "none" ? rawMode : "inherit";
+
+  if (rawProxy?.mode && mode !== rawMode) {
+    console.warn(
+      `[memu-engine] Invalid network.proxy.mode='${String(rawProxy.mode)}'. ` +
+        "Expected 'inherit', 'plugin', or 'none'. Falling back to 'inherit'."
+    );
+  }
+
+  return {
+    mode,
+    httpProxy: normalizeOptionalString(rawProxy?.httpProxy),
+    httpsProxy: normalizeOptionalString(rawProxy?.httpsProxy),
+    allProxy: normalizeOptionalString(rawProxy?.allProxy),
+    noProxy: normalizeOptionalString(rawProxy?.noProxy),
+  };
+}
+
+function withoutProxyEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const sanitized: NodeJS.ProcessEnv = { ...env };
+  for (const key of PROXY_ENV_KEYS) {
+    delete sanitized[key];
+  }
+  return sanitized;
+}
+
+function applyProxyEnv(baseEnv: NodeJS.ProcessEnv, proxyConfig: ProxyConfig): NodeJS.ProcessEnv {
+  if (proxyConfig.mode === "inherit") {
+    return { ...baseEnv };
+  }
+
+  const env = withoutProxyEnv(baseEnv);
+  if (proxyConfig.mode === "none") {
+    return env;
+  }
+
+  const configuredProxyCount = [
+    proxyConfig.httpProxy,
+    proxyConfig.httpsProxy,
+    proxyConfig.allProxy,
+    proxyConfig.noProxy,
+  ].filter((value) => typeof value === "string" && value.length > 0).length;
+
+  if (configuredProxyCount === 0) {
+    console.warn(
+      "[memu-engine] network.proxy.mode='plugin' is set but no proxy values were provided. " +
+        "Python child processes will run without standard proxy env vars. " +
+        "Use mode='none' for explicit no-proxy behavior, or configure network.proxy.httpProxy/httpsProxy/allProxy/noProxy."
+    );
+  }
+
+  if (proxyConfig.httpProxy) {
+    env.HTTP_PROXY = proxyConfig.httpProxy;
+    env.http_proxy = proxyConfig.httpProxy;
+  }
+  if (proxyConfig.httpsProxy) {
+    env.HTTPS_PROXY = proxyConfig.httpsProxy;
+    env.https_proxy = proxyConfig.httpsProxy;
+  }
+  if (proxyConfig.allProxy) {
+    env.ALL_PROXY = proxyConfig.allProxy;
+    env.all_proxy = proxyConfig.allProxy;
+  }
+  if (proxyConfig.noProxy) {
+    env.NO_PROXY = proxyConfig.noProxy;
+    env.no_proxy = proxyConfig.noProxy;
+  }
+  return env;
+}
+
+function buildPythonProcessEnv(
+  normalizedConfig: NormalizedConfig,
+  extraEnv: Record<string, string>
+): NodeJS.ProcessEnv {
+  return {
+    ...applyProxyEnv(process.env, normalizedConfig.network.proxy),
+    ...extraEnv,
+  };
+}
 
 function normalizeAgentSettings(config: any): Record<string, { memoryEnabled: boolean; searchEnabled: boolean; searchableStores: string[] }> {
   const raw = config?.agentSettings;
@@ -143,6 +262,9 @@ function normalizeConfig(config: any): NormalizedConfig {
     storageMode: "hybrid",
     chunkSize: chunkSizeNum,
     chunkOverlap: chunkOverlapNum,
+    network: {
+      proxy: normalizeProxyConfig(config),
+    },
   };
 }
 
@@ -357,8 +479,10 @@ const memuEnginePlugin = {
     const pythonRoot = path.join(__dirname, "python");
     let pythonBootstrapResult: PythonBootstrapResult | null = null;
 
-    const ensurePythonRuntime = (): PythonBootstrapResult => {
+    const ensurePythonRuntime = (pluginConfig?: any): PythonBootstrapResult => {
       if (pythonBootstrapResult) return pythonBootstrapResult;
+
+      const normalizedConfig = normalizeConfig(pluginConfig || api.pluginConfig || {});
 
       try {
         execFileSync("uv", ["--version"], { stdio: "ignore" });
@@ -376,10 +500,9 @@ const memuEnginePlugin = {
         // This avoids relying on system python (often 3.10) and prevents ABI mismatches.
         execFileSync("uv", ["sync", "--project", pythonRoot, "--frozen"], {
           cwd: pythonRoot,
-          env: {
-            ...process.env,
+          env: buildPythonProcessEnv(normalizedConfig, {
             UV_LINK_MODE: process.env.UV_LINK_MODE || "copy",
-          },
+          }),
           stdio: "ignore",
         });
 
@@ -396,6 +519,7 @@ const memuEnginePlugin = {
           ],
           {
             cwd: pythonRoot,
+            env: buildPythonProcessEnv(normalizedConfig, {}),
             stdio: "ignore",
           }
         );
@@ -759,7 +883,7 @@ const memuEnginePlugin = {
 
       const normalizedConfig = normalizeConfig(pluginConfig || {});
 
-      const pyReady = ensurePythonRuntime();
+      const pyReady = ensurePythonRuntime(normalizedConfig);
       if (!pyReady.ok) {
         console.error(`[memU] Python bootstrap failed: ${pyReady.reason}`);
         return;
@@ -788,8 +912,7 @@ const memuEnginePlugin = {
       );
       
       const ingestConfig = normalizedConfig.ingest || {};
-      const env = {
-        ...process.env,
+      const env = buildPythonProcessEnv(normalizedConfig, {
         PYTHONIOENCODING: "utf-8",
         MEMU_USER_ID: userId,
         MEMU_EMBED_PROVIDER: embeddingConfig.provider || "openai",
@@ -822,7 +945,7 @@ const memuEnginePlugin = {
           Number.isFinite(Number(ingestConfig.scheduledSystemMinChars))
             ? String(Math.max(64, Math.trunc(Number(ingestConfig.scheduledSystemMinChars))))
             : "500",
-      };
+      });
 
       const scriptPath = path.join(pythonRoot, "watch_sync.py");
       
@@ -1010,7 +1133,7 @@ const memuEnginePlugin = {
       pluginConfig: any,
       workspaceDir: string,
     ): Promise<string> => {
-      const pyReady = ensurePythonRuntime();
+      const pyReady = ensurePythonRuntime(pluginConfig);
       if (!pyReady.ok) {
         return `Error: memU Python bootstrap failed. ${pyReady.reason || "unknown reason"}`;
       }
@@ -1039,8 +1162,7 @@ const memuEnginePlugin = {
       );
       
       const ingestConfig = normalizedConfig.ingest || {};
-      const env = {
-        ...process.env,
+      const env = buildPythonProcessEnv(normalizedConfig, {
         PYTHONIOENCODING: "utf-8",
         MEMU_USER_ID: userId,
         
@@ -1075,7 +1197,7 @@ const memuEnginePlugin = {
           Number.isFinite(Number(ingestConfig.scheduledSystemMinChars))
             ? String(Math.max(64, Math.trunc(Number(ingestConfig.scheduledSystemMinChars))))
             : "500",
-      };
+      });
 
       return new Promise((resolve) => {
         const proc = spawn("uv", ["run", "--project", pythonRoot, "python", path.join(pythonRoot, "scripts", scriptName), ...args], {
