@@ -1,5 +1,5 @@
 import base64
-import logging
+import logging, time
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -55,14 +55,28 @@ class OpenAISDKClient:
         user_message: ChatCompletionUserMessageParam = {"role": "user", "content": prompt}
         messages.append(user_message)
 
-        response = await self.client.chat.completions.create(
-            model=self.chat_model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-        )
-        content = response.choices[0].message.content
-        logger.debug("OpenAI chat response: %s", response)
+        ms = int(time.time() * 1000)
+        try:
+            logger.info("LLM-chat model[%s]: %s[%s%s]", ms, self.chat_model, self.base_url, "/chat.completions")
+            logger.info("LLM-chat system prompt[%s]: %s", ms, system_prompt[:100] + "..." if system_prompt and len(system_prompt) > 100 else system_prompt)
+            logger.info("LLM-chat user prompt[%s]: %s", ms, prompt[:200] + "..." if prompt and len(prompt) > 200 else prompt)
+
+            response = await self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
+            content = response.choices[0].message.content
+            logger.debug("OpenAI chat response: %s", response)
+
+            logger.info("LLM-chat tokens usage[%s]: %s (input: %s, output: %s)", ms, response.usage.total_tokens if response.usage else "N/A", response.usage.prompt_tokens if response.usage else "N/A", response.usage.completion_tokens if response.usage else "N/A")
+            logger.debug("LLM-chat response[%s]: %s", ms, content[:200] + "..." if content and len(content) > 200 else content)
+
+        except Exception as e:
+            logger.error("LLM error[%s] of model[%s]: %s", ms, self.chat_model, str(e))
+            raise
+
         return content or "", response
 
     async def summarize(
@@ -78,14 +92,28 @@ class OpenAISDKClient:
         user_message: ChatCompletionUserMessageParam = {"role": "user", "content": text}
         messages: list[ChatCompletionMessageParam] = [system_message, user_message]
 
-        response = await self.client.chat.completions.create(
-            model=self.chat_model,
-            messages=messages,
-            temperature=1,
-            max_tokens=max_tokens,
-        )
-        content = response.choices[0].message.content
-        logger.debug("OpenAI summarize response: %s", response)
+        ms = int(time.time() * 1000)
+        try:
+            logger.info("LLM-summarize model[%s]: %s[%s%s]", ms, self.chat_model, self.base_url, "/chat.completions")
+            logger.info("LLM-summarize system prompt[%s]: %s", ms, system_prompt[:100] + "..." if system_prompt and len(system_prompt) > 100 else system_prompt)
+            logger.info("LLM-summarize user prompt[%s]: %s", ms, prompt[:200] + "..." if prompt and len(prompt) > 200 else prompt)
+
+
+            response = await self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=messages,
+                temperature=1,
+                max_tokens=max_tokens,
+            )
+            content = response.choices[0].message.content
+            logger.debug("OpenAI summarize response: %s", response)
+
+            logger.info("LLM-summarize tokens usage[%s]: %s (input: %s, output: %s)", ms, response.usage.total_tokens if response.usage else "N/A", response.usage.prompt_tokens if response.usage else "N/A", response.usage.completion_tokens if response.usage else "N/A")
+            logger.debug("LLM-summarize response[%s]: %s", ms, content[:200] + "..." if content and len(content) > 200 else content)
+        except Exception as e:
+            logger.error("LLM-summarize error[%s] of model[%s]: %s", ms, self.chat_model, str(e))
+            raise
+
         return content or "", response
 
     async def vision(
@@ -144,20 +172,45 @@ class OpenAISDKClient:
         }
         messages.append(user_message)
 
-        response = await self.client.chat.completions.create(
-            model=self.chat_model,
-            messages=messages,
-            temperature=1,
-            max_tokens=max_tokens,
-        )
-        content = response.choices[0].message.content
-        logger.debug("OpenAI vision response: %s", response)
+        ms = int(time.time() * 1000)
+        try:
+            logger.info("LLM-vision model[%s]: %s[%s%s]", ms, self.chat_model, self.base_url, "/chat.completions")
+            logger.info("LLM-vision system prompt[%s]: %s", ms, system_prompt[:100] + "..." if system_prompt and len(system_prompt) > 100 else system_prompt)
+            logger.info("LLM-vision user prompt[%s]: %s", ms, prompt[:200] + "..." if prompt and len(prompt) > 200 else prompt)
+
+            response = await self.client.chat.completions.create(
+                model=self.chat_model,
+                messages=messages,
+                temperature=1,
+                max_tokens=max_tokens,
+            )
+            content = response.choices[0].message.content
+            logger.debug("OpenAI vision response: %s", response)
+
+
+            logger.info("LLM-vision tokens usage[%s]: %s (input: %s, output: %s)", ms, response.usage.total_tokens if response.usage else "N/A", response.usage.prompt_tokens if response.usage else "N/A", response.usage.completion_tokens if response.usage else "N/A")
+            logger.debug("LLM-vision response[%s]: %s", ms, content[:200] + "..." if content and len(content) > 200 else content)
+        except Exception as e:
+            logger.error("LLM error[%s] of model[%s]: %s", ms, self.chat_model, str(e))
+            raise
+
         return content or "", response
 
     async def embed(self, inputs: list[str]) -> tuple[list[list[float]], CreateEmbeddingResponse | None]:
         """Create text embeddings via the official SDK."""
         if len(inputs) <= self.embed_batch_size:
-            response = await self.client.embeddings.create(model=self.embed_model, input=inputs)
+            ms = int(time.time() * 1000)
+            try:
+                logger.info("LLM-embed model[%s]: %s[%s%s]", ms, self.embed_model, self.base_url, "/embeddings")
+                logger.info("LLM-embed inputs[%s]: %s", ms, inputs[:100] + "..." if inputs and len(inputs) > 100 else inputs)
+
+                response = await self.client.embeddings.create(model=self.embed_model, input=inputs)
+
+                logger.info("LLM-embed tokens usage[%s]: %s (input: %s, output: %s)", ms, response.usage.total_tokens if response.usage else "N/A", response.usage.prompt_tokens if response.usage else "N/A", response.usage.completion_tokens if response.usage else "N/A")
+            except Exception as e:
+                logger.error("LLM-embed error[%s] of model[%s]: %s", ms, self.embed_model, str(e))
+                raise
+
             return [cast(list[float], d.embedding) for d in response.data], response
 
         # For batched requests, we aggregate embeddings but only return the last response for usage
@@ -165,9 +218,20 @@ class OpenAISDKClient:
         last_response: CreateEmbeddingResponse | None = None
         for idx in range(0, len(inputs), self.embed_batch_size):
             batch = inputs[idx : idx + self.embed_batch_size]
-            response = await self.client.embeddings.create(model=self.embed_model, input=batch)
-            all_embeddings.extend([cast(list[float], d.embedding) for d in response.data])
-            last_response = response
+
+            ms = int(time.time() * 1000)
+            try:
+                logger.info("LLM-embed model[%s]: %s[%s%s]", ms, self.embed_model, self.base_url, "/embeddings")
+                logger.info("LLM-embed inputs[%s]: %s", ms, batch[:100] + "..." if batch and len(batch) > 100 else batch)
+
+                response = await self.client.embeddings.create(model=self.embed_model, input=batch)
+                all_embeddings.extend([cast(list[float], d.embedding) for d in response.data])
+                last_response = response
+
+                logger.info("LLM-embed tokens usage[%s]: %s (input: %s, output: %s)", ms, response.usage.total_tokens if response.usage else "N/A", response.usage.prompt_tokens if response.usage else "N/A", response.usage.completion_tokens if response.usage else "N/A")
+            except Exception as e:
+                logger.error("LLM-embed error[%s] of model[%s]: %s", ms, self.embed_model, str(e))
+                raise
 
         return all_embeddings, last_response
 
@@ -199,18 +263,30 @@ class OpenAISDKClient:
             if language is not None:
                 kwargs["language"] = language
             with open(audio_path, "rb") as audio_stream:
-                transcription = await self.client.audio.transcriptions.create(
-                    file=audio_stream,
-                    model="gpt-4o-mini-transcribe",
-                    response_format=response_format,
-                    **kwargs,
-                )
+                model="gpt-4o-mini-transcribe"
+
+                ms = int(time.time() * 1000)
+                try:
+                    logger.info("LLM-transcribe model[%s]: %s[%s%s], language=%s", ms, model, self.base_url, "/audio.transcriptions", language)
+                    logger.info("LLM-transcribe user prompt[%s]: %s", ms, prompt[:200] + "..." if prompt and len(prompt) > 200 else prompt)
+
+                    transcription = await self.client.audio.transcriptions.create(
+                        file=audio_stream,
+                        model=model,
+                        response_format=response_format,
+                        **kwargs,
+                    )
+                except Exception as e:
+                    logger.error("LLM-transcribe error[%s] of model[%s]: %s", ms, model, str(e))
+                    raise
 
             # Handle different response formats
             if response_format == "text":
                 result = transcription if isinstance(transcription, str) else transcription.text
             else:
                 result = transcription.text if hasattr(transcription, "text") else str(transcription)
+                if transcription.usage:
+                    logger.info("LLM-transcribe tokens usage[%s]: %s (input: %s, output: %s)", ms, transcription.usage.total_tokens, transcription.usage.prompt_tokens, transcription.usage.completion_tokens)
 
             logger.debug("OpenAI transcribe response for %s: %s chars", audio_path, len(result))
         except Exception:

@@ -1085,7 +1085,7 @@ const memuEnginePlugin = {
 
         let stdout = "";
         let stderr = "";
-        proc.stdout.on("data", (data) => { stdout += data.toString(); });
+        proc.stdout.on("data", (data) => { console.log("[memU py] stdout: ", data.toString()); stdout += data.toString(); });
         proc.stderr.on("data", (data) => { stderr += data.toString(); });
 
         proc.on("close", (code) => {

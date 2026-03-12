@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
-import httpx
+import httpx, time
 
 from memu.llm.backends.base import LLMBackend
 from memu.llm.backends.doubao import DoubaoLLMBackend
@@ -125,12 +125,30 @@ class HTTPLLMClient:
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
 
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
-            resp = await client.post(self.summary_endpoint, json=payload, headers=self._headers())
-            resp.raise_for_status()
-            data = resp.json()
-        logger.debug("HTTP LLM chat response: %s", data)
-        return self.backend.parse_summary_response(data), data
+        ms = int(time.time() * 1000)
+        try:
+            logger.info("LLM-chat model[%s]: %s[%s%s]", ms, self.chat_model, self.base_url, self.summary_endpoint)
+            logger.info("LLM-chat system prompt[%s]: %s", ms, system_prompt[:100] + "..." if system_prompt and len(system_prompt) > 100 else system_prompt)
+            logger.info("LLM-chat user prompt[%s]: %s", ms, prompt[:200] + "..." if len(prompt) > 200 else prompt)
+
+            async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
+                resp = await client.post(self.summary_endpoint, json=payload, headers=self._headers())
+                resp.raise_for_status()
+                data = resp.json()
+            logger.debug("HTTP LLM chat response: %s", data)
+
+            if "usage" in data:
+                usage = data["usage"]
+                logger.info("LLM-chat tokens usage[%s]: %s (input: %s, output: %s)", ms, usage.get("total_tokens", "N/A"), usage.get("prompt_tokens", "N/A"), usage.get("completion_tokens", "N/A"))
+
+            content = self.backend.parse_summary_response(data)
+            logger.info("LLM-chat reponse[%s]: %s", ms, content[:200] + "..." if content and len(content) > 200 else content)
+
+        except Exception as e:
+            logger.error("LLM-chat error[%s] of model[%s]: %s", ms, self.chat_model, str(e))
+            raise
+
+        return content, data
 
     async def summarize(
         self, text: str, max_tokens: int | None = None, system_prompt: str | None = None
@@ -138,12 +156,30 @@ class HTTPLLMClient:
         payload = self.backend.build_summary_payload(
             text=text, system_prompt=system_prompt, chat_model=self.chat_model, max_tokens=max_tokens
         )
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
-            resp = await client.post(self.summary_endpoint, json=payload, headers=self._headers())
-            resp.raise_for_status()
-            data = resp.json()
-        logger.debug("HTTP LLM summarize response: %s", data)
-        return self.backend.parse_summary_response(data), data
+
+        ms = int(time.time() * 1000)
+        try:
+            logger.info("LLM-summarize model[%s]: %s[%s%s]", ms, self.chat_model, self.base_url, self.summary_endpoint)
+            logger.info("LLM-summarize system prompt[%s]: %s", ms, system_prompt[:100] + "..." if system_prompt and len(system_prompt) > 100 else system_prompt)
+            logger.info("LLM-summarize user prompt[%s]: %s", ms, prompt[:200] + "..." if len(prompt) > 200 else prompt)
+
+            async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
+                resp = await client.post(self.summary_endpoint, json=payload, headers=self._headers())
+                resp.raise_for_status()
+                data = resp.json()
+            logger.debug("HTTP LLM summarize response: %s", data)
+
+            content = self.backend.parse_summary_response(data)
+            if "usage" in data:
+                usage = data["usage"]
+                logger.info("LLM-summarize tokens usage[%s]: %s (input: %s, output: %s)", ms, usage.get("total_tokens", "N/A"), usage.get("prompt_tokens", "N/A"), usage.get("completion_tokens", "N/A"))
+            logger.info("LLM-summarize reponse[%s]: %s", ms, content[:200] + "..." if content and len(content) > 200 else content)
+            logger.debug("LLM-summarize chat response[%s]: %s", ms, data)
+        except Exception as e:
+            logger.error("LLM-summarize error[%s] of model[%s]: %s", ms, self.chat_model, str(e))
+            raise
+        
+        return content, data
 
     async def vision(
         self,
@@ -188,22 +224,58 @@ class HTTPLLMClient:
             max_tokens=max_tokens,
         )
 
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
-            resp = await client.post(self.summary_endpoint, json=payload, headers=self._headers())
-            resp.raise_for_status()
-            data = resp.json()
-        logger.debug("HTTP LLM vision response: %s", data)
-        return self.backend.parse_summary_response(data), data
+        ms = int(time.time() * 1000)
+        try:
+            logger.info("LLM-vision model[%s]: %s[%s%s]", ms, self.chat_model, self.base_url, self.summary_endpoint)
+            logger.info("LLM-vision system prompt[%s]: %s", ms, system_prompt[:100] + "..." if system_prompt and len(system_prompt) > 100 else system_prompt)
+            logger.info("LLM-vision user prompt[%s]: %s", ms, prompt[:200] + "..." if len(prompt) > 200 else prompt)
+
+            async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
+                resp = await client.post(self.summary_endpoint, json=payload, headers=self._headers())
+                resp.raise_for_status()
+                data = resp.json()
+            logger.debug("HTTP LLM vision response: %s", data)
+
+            content = self.backend.parse_summary_response(data)
+            if "usage" in data:
+                usage = data["usage"]
+                logger.info("LLM-vision tokens usage[%s]: %s (input: %s, output: %s)", ms, usage.get("total_tokens", "N/A"), usage.get("prompt_tokens", "N/A"), usage.get("completion_tokens", "N/A"))
+            logger.info("LLM-vision reponse[%s]: %s", ms, content[:200] + "..." if content and len(content) > 200 else content)
+
+        except Exception as e:
+            logger.error("LLM-vision error[%s] of model[%s]: %s", ms, self.chat_model, str(e))
+            raise
+
+        return content, data
 
     async def embed(self, inputs: list[str]) -> tuple[list[list[float]], dict[str, Any]]:
         """Create text embeddings using the provider-specific embedding API."""
         payload = self.embedding_backend.build_embedding_payload(inputs=inputs, embed_model=self.embed_model)
-        async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
-            resp = await client.post(self.embedding_endpoint, json=payload, headers=self._headers())
-            resp.raise_for_status()
-            data = resp.json()
-        logger.debug("HTTP embedding response: %s", data)
-        return self.embedding_backend.parse_embedding_response(data), data
+
+        ms = int(time.time() * 1000)
+        try:
+            logger.info("LLM-embed model[%s]: %s[%s%s]", ms, self.embed_model, self.base_url, self.embedding_endpoint)
+            logger.info("LLM-embed inputs[%s]: %s", ms, inputs[:100] + "..." if inputs and len(inputs) > 100 else inputs)
+            
+
+            async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
+                resp = await client.post(self.embedding_endpoint, json=payload, headers=self._headers())
+                resp.raise_for_status()
+                data = resp.json()
+            logger.debug("HTTP embedding response: %s", data)
+
+            content = self.embedding_backend.parse_embedding_response(data)
+            if "usage" in data:
+                usage = data["usage"]
+                if usage:
+                    logger.info("LLM-embed tokens usage[%s]: %s (input: %s, output: %s)", ms, usage.get("total_tokens", "N/A"), usage.get("prompt_tokens", "N/A"), usage.get("completion_tokens", "N/A"))
+
+            logger.info("LLM-embed reponse[%s]: %s", ms, content[:200] + "..." if content and len(content) > 200 else content)
+        except Exception as e:
+            logger.error("LLM-embed error[%s] of model[%s]: %s", ms, self.embed_model, str(e))
+            raise
+
+        return content, data
 
     async def transcribe(
         self,
@@ -239,6 +311,12 @@ class HTTPLLMClient:
                 if language:
                     data["language"] = language
 
+                ms = int(time.time() * 1000)
+                
+                logger.info("LLM-transcribe model[%s]: %s[%s%s], language=%s", ms, data["model"] self.base_url, "/v1/audio/transcriptions", language)
+                logger.info("LLM-transcribe user prompt[%s]: %s", ms, prompt[:200] + "..." if prompt and len(prompt) > 200 else prompt)
+
+
                 async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout * 3) as client:
                     resp = await client.post(
                         "/v1/audio/transcriptions",
@@ -253,8 +331,13 @@ class HTTPLLMClient:
                     else:
                         raw_response = resp.json()
                         result = raw_response.get("text", "")
+                logger.debug("HTTP audio transcribe response for %s: %s chars", audio_path, len(result))
 
-            logger.debug("HTTP audio transcribe response for %s: %s chars", audio_path, len(result))
+                if raw_response and "usage" in raw_response:
+                    usage = raw_response["usage"]
+                    if usage:
+                        logger.info("LLM-transcribe tokens usage[%s]: %s (input: %s, output: %s)", ms, usage.get("total_tokens", "N/A"), usage.get("prompt_tokens", "N/A"), usage.get("completion_tokens", "N/A"))
+
         except Exception:
             logger.exception("Audio transcription failed for %s", audio_path)
             raise
