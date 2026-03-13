@@ -206,7 +206,7 @@ class OpenAISDKClient:
 
                 response = await self.client.embeddings.create(model=self.embed_model, input=inputs)
 
-                logger.info("LLM-embed tokens usage[%s]: %s (input: %s, output: %s)", ms, response.usage.total_tokens if response.usage.total_tokens else "N/A", response.usage.prompt_tokens if response.usage.prompt_tokens else "N/A", response.usage.completion_tokens if response.usage.completion_tokens else "N/A")
+                logger.info("LLM-embed tokens usage[%s]: %s (input: %s)", ms, response.usage.total_tokens if response.usage.total_tokens else "N/A", response.usage.prompt_tokens if response.usage.prompt_tokens else "N/A")
             except Exception as e:
                 logger.error("LLM-embed error[%s] of model[%s]: %s", ms, self.embed_model, str(e))
                 raise
@@ -228,7 +228,7 @@ class OpenAISDKClient:
                 all_embeddings.extend([cast(list[float], d.embedding) for d in response.data])
                 last_response = response
 
-                logger.info("LLM-embed tokens usage[%s]: %s (input: %s, output: %s)", ms, response.usage.total_tokens if response.usage else "N/A", response.usage.prompt_tokens if response.usage else "N/A", response.usage.completion_tokens if response.usage else "N/A")
+                logger.info("LLM-embed tokens usage[%s]: %s (input: %s)", ms, response.usage.total_tokens if response.usage else "N/A", response.usage.prompt_tokens if response.usage else "N/A")
             except Exception as e:
                 logger.error("LLM-embed error[%s] of model[%s]: %s", ms, self.embed_model, str(e))
                 raise
